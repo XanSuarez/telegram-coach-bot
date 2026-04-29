@@ -72,7 +72,7 @@ def preguntar_gpt(msg, user):
         print("Mensaje:", msg)
 
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Eres entrenador de triatlón"},
                 {"role": "user", "content": msg}
