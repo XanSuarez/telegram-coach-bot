@@ -16,7 +16,10 @@ user_db = {}
 
 def get_user(user_id):
     if user_id not in user_db:
-        user_db[user_id] = {"historial": []}
+        user_db[user_id] = {
+            "historial": [],
+            "ultimo_entreno": None
+        }
     return user_db[user_id]
 
 # -------------------------
@@ -122,7 +125,7 @@ def generar_entreno(deporte, tiempo, fatiga, user):
         s1 = sesion_bici(tipo1, tiempo)
         s2 = sesion_bici(tipo2, tiempo)
 
-    return f"""
+    return tipo1, f"""
 📊 Análisis:
 Fatiga: {fatiga}/10
 Carga reciente: {calcular_carga(user["historial"])} min
@@ -148,20 +151,41 @@ def guardar_sesion(user, tipo, duracion):
     })
 
 # -------------------------
-# CHATGPT
+# DETECCIÓN PREGUNTA
 # -------------------------
-def preguntar_gpt(mensaje):
+def es_pregunta(texto):
+    palabras = ["?", "por que", "porque", "explica", "como", "que", "cuando"]
+    return any(p in texto for p in palabras)
+
+# -------------------------
+# CHATGPT CON CONTEXTO
+# -------------------------
+def preguntar_gpt(mensaje, user):
+
+    contexto = user.get("ultimo_entreno")
+
+    if contexto:
+        contexto_texto = f"""
+Contexto del atleta:
+- Deporte: {contexto['deporte']}
+- Tiempo: {contexto['tiempo']} min
+- Fatiga: {contexto['fatiga']}/10
+- Tipo sesión: {contexto['tipo']}
+- Carga reciente: {contexto['carga']} min
+"""
+    else:
+        contexto_texto = "Sin datos previos."
 
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {
                 "role": "system",
-                "content": "Eres un entrenador experto en triatlón y deportes de resistencia."
+                "content": "Eres un entrenador experto en triatlón, especializado en control de carga y rendimiento."
             },
             {
                 "role": "user",
-                "content": mensaje
+                "content": contexto_texto + "\n\nPregunta:\n" + mensaje
             }
         ]
     )
@@ -174,23 +198,21 @@ def preguntar_gpt(mensaje):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🏃‍♂️ Entrenador XS PRO\n\n"
-        "Respóndeme así:\n\n"
-        "1. Deporte (running/bici)\n"
-        "2. Tiempo (min)\n"
-        "3. Fatiga (0-10)\n\n"
-        "Ejemplo:\n"
-        "running 45 6\n\n"
-        "También puedes preguntarme dudas 😉"
+        "Responde así:\n"
+        "running 45 6\n"
+        "bici 90 5\n\n"
+        "También puedes preguntarme cosas 😉"
     )
 
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = update.message.text.lower()
+    user = get_user(update.effective_user.id)
 
-    # 👉 modo conversación (ChatGPT)
-    if "?" in texto or "por que" in texto or "explica" in texto:
-        respuesta = preguntar_gpt(texto)
+    # 👉 modo conversación inteligente
+    if es_pregunta(texto):
+        respuesta = preguntar_gpt(texto, user)
         await update.message.reply_text(respuesta)
         return
 
@@ -202,16 +224,21 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tiempo = int(partes[1])
         fatiga = int(partes[2])
 
-        user = get_user(update.effective_user.id)
+        tipo1, respuesta = generar_entreno(deporte, tiempo, fatiga, user)
 
-        respuesta = generar_entreno(deporte, tiempo, fatiga, user)
-
-        # guardamos sesión principal
-        tipo1, _ = decidir_con_carga(fatiga, user["historial"])
         guardar_sesion(user, tipo1, tiempo)
 
+        # guardar contexto para GPT
+        user["ultimo_entreno"] = {
+            "deporte": deporte,
+            "tiempo": tiempo,
+            "fatiga": fatiga,
+            "tipo": tipo1,
+            "carga": calcular_carga(user["historial"])
+        }
+
     except:
-        respuesta = "❌ Formato incorrecto.\nEjemplo: running 45 6"
+        respuesta = "❌ Formato incorrecto. Ejemplo: running 45 6"
 
     await update.message.reply_text(respuesta)
 
