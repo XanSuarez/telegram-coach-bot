@@ -67,35 +67,25 @@ def sesion_run(tipo, t):
 # -------------------------
 def preguntar_gpt(msg, user):
 
-    historial = user.get("historial", [])
-    ultimo = user.get("ultimo_entreno")
+    try:
+        print("👉 LLAMANDO A GPT...")
+        print("Mensaje:", msg)
 
-    resumen = ", ".join([s["tipo"] for s in historial[-3:]])
-    carga = calcular_carga(historial)
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": "Eres entrenador de triatlón"},
+                {"role": "user", "content": msg}
+            ]
+        )
 
-    contexto = f"""
-Eres un entrenador experto en triatlón.
+        print("✅ RESPUESTA GPT OK")
 
-Contexto:
-- Últimas sesiones: {resumen}
-- Carga reciente: {carga} min
-"""
+        return response.choices[0].message.content
 
-    if ultimo:
-        contexto += f"""
-- Último entreno:
-  Tipo: {ultimo['tipo']}
-  Fatiga: {ultimo['fatiga']}
-"""
-
-    prompt = contexto + f"\n\nPregunta:\n{msg}"
-
-    r = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role":"user","content":prompt}]
-    )
-
-    return r.choices[0].message.content
+    except Exception as e:
+        print("❌ ERROR GPT:", e)
+        return "⚠️ Error conectando con el coach. Inténtalo otra vez."
 
 # -------------------------
 # FLUJO
