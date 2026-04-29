@@ -105,9 +105,10 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.lower()
 
     # 👉 GPT conversación
-    if es_pregunta(texto):
-        r = preguntar_gpt(texto, user)
-        await update.message.reply_text(r)
+    # 👉 Si no estamos en flujo → GPT
+    if user["estado"] is None:
+        respuesta = preguntar_gpt(texto, user)
+        await update.message.reply_text(respuesta)
         return
 
     # -------------------------
