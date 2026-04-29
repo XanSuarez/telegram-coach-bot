@@ -5,159 +5,97 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 TOKEN = os.getenv("TOKEN")
 
 # -------------------------
-# PARSEO INPUT
+# DECISIÓN ENTRENAMIENTO
 # -------------------------
-def parse_input(texto):
-    texto = texto.lower()
+def decidir_tipo(fatiga, ayer_intensidad):
 
-    deporte = "running"
-    if "bici" in texto or "bike" in texto:
-        deporte = "bici"
-    elif "swim" in texto or "natacion" in texto:
-        deporte = "swim"
-
-    tiempo = 45
-    for t in texto.split():
-        if "min" in t:
-            try:
-                tiempo = int(t.replace("min",""))
-            except:
-                pass
-
-    fatiga = 5
-    for t in texto.split():
-        if t.isdigit():
-            f = int(t)
-            if 0 <= f <= 10:
-                fatiga = f
-
-    tipo = "aerobico"
-    if "umbral" in texto:
-        tipo = "umbral"
-    elif "vo2" in texto:
-        tipo = "vo2"
-    elif "tempo" in texto:
-        tipo = "tempo"
-
-    nivel = "medio"
-    if "principiante" in texto:
-        nivel = "principiante"
-    elif "avanzado" in texto:
-        nivel = "avanzado"
-
-    return deporte, tiempo, fatiga, tipo, nivel
-
-
-# -------------------------
-# AJUSTE POR FATIGA
-# -------------------------
-def ajustar_por_fatiga(tipo, fatiga):
     if fatiga >= 8:
-        return "suave"
-    elif fatiga >= 6 and tipo in ["vo2"]:
-        return "umbral"
-    return tipo
+        return "suave", "movilidad"
 
-
-# -------------------------
-# GENERADOR SESIONES
-# -------------------------
-def generar_running(tiempo, tipo, nivel):
-
-    if tipo == "suave":
-        return f"""🏃 Rodaje regenerativo
-
-⏱ {tiempo} min suaves (Z1-Z2)
-
-💡 Enfocado en recuperación"""
-
-    if tipo == "umbral":
-        if tiempo < 40:
-            bloques = "2x8'"
-        elif tiempo < 60:
-            bloques = "3x8'"
+    if fatiga >= 6:
+        if ayer_intensidad:
+            return "aerobico", "suave"
         else:
-            bloques = "3x10'"
+            return "umbral", "aerobico"
 
-        return f"""🏃 Umbral
-
-10’ suave
-{bloques} a ritmo umbral (rec 2’)
-10’ suave"""
-
-    if tipo == "vo2":
-        return f"""🏃 VO2max
-
-10’ suave
-5x3’ fuerte (rec 2’)
-10’ suave"""
-
-    return f"""🏃 Aeróbico
-
-{tiempo} min Z2 continuo"""
+    if fatiga <= 5:
+        if ayer_intensidad:
+            return "tempo", "aerobico"
+        else:
+            return "vo2", "umbral"
 
 
-def generar_bici(tiempo, tipo, nivel):
+# -------------------------
+# SESIONES
+# -------------------------
+def sesion_running(tipo, tiempo):
 
     if tipo == "suave":
-        return f"""🚴 Rodaje suave
+        return f"{tiempo}’ muy suave (Z1-Z2)"
 
-⏱ {tiempo} min Z1-Z2"""
+    if tipo == "aerobico":
+        return f"{tiempo}’ Z2 continuo"
+
+    if tipo == "tempo":
+        return "10’ + 2x10’ tempo (rec 2’) + 10’"
 
     if tipo == "umbral":
-        return f"""🚴 Umbral
-
-15’ warmup
-3x10’ FTP (rec 5’)
-10’ cooldown"""
+        return "10’ + 3x8’ umbral (rec 2’) + 10’"
 
     if tipo == "vo2":
-        return f"""🚴 VO2max
+        return "10’ + 5x3’ fuerte (rec 2’) + 10’"
 
-15’ warmup
-6x3’ alta intensidad (rec 3’)
-10’ suave"""
-
-    return f"""🚴 Aeróbico
-
-{tiempo} min Z2"""
+    return "Rodaje libre"
 
 
-def generar_swim(tiempo, tipo, nivel):
+def sesion_bici(tipo, tiempo):
 
-    return f"""🏊 Natación
+    if tipo == "suave":
+        return f"{tiempo}’ Z1-Z2"
 
-400 suave
-6x100 técnica
-8x100 aeróbico medio
-200 suave"""
+    if tipo == "aerobico":
+        return f"{tiempo}’ Z2"
+
+    if tipo == "tempo":
+        return "15’ + 2x12’ tempo + 10’"
+
+    if tipo == "umbral":
+        return "15’ + 3x10’ FTP + 10’"
+
+    if tipo == "vo2":
+        return "15’ + 6x3’ fuerte + 10’"
+
+    return "Salida libre"
 
 
 # -------------------------
-# RESPUESTA FINAL
+# GENERADOR FINAL
 # -------------------------
-def generar_sesion(texto):
+def generar_entreno(deporte, tiempo, fatiga, ayer):
 
-    deporte, tiempo, fatiga, tipo, nivel = parse_input(texto)
-
-    tipo = ajustar_por_fatiga(tipo, fatiga)
+    tipo1, tipo2 = decidir_tipo(fatiga, ayer)
 
     if deporte == "running":
-        sesion = generar_running(tiempo, tipo, nivel)
-    elif deporte == "bici":
-        sesion = generar_bici(tiempo, tipo, nivel)
+        s1 = sesion_running(tipo1, tiempo)
+        s2 = sesion_running(tipo2, tiempo)
     else:
-        sesion = generar_swim(tiempo, tipo, nivel)
+        s1 = sesion_bici(tipo1, tiempo)
+        s2 = sesion_bici(tipo2, tiempo)
 
-    return f"""📊 Datos detectados:
-- Deporte: {deporte}
-- Tiempo: {tiempo} min
-- Fatiga: {fatiga}/10
-- Objetivo: {tipo}
+    return f"""
+📊 Análisis:
+Fatiga: {fatiga}/10
+Ayer intensidad: {"Sí" if ayer else "No"}
 
-----------------------
+🎯 Opción recomendada:
+{tipo1.upper()}
+{s1}
 
-{sesion}
+🔁 Alternativa:
+{tipo2.upper()}
+{s2}
+
+💡 Ajustado automáticamente según carga reciente
 """
 
 
@@ -166,15 +104,31 @@ def generar_sesion(texto):
 # -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hola 👋 Soy tu entrenador PRO\n\n"
+        "🏃‍♂️ Entrenador XS\n\n"
+        "Respóndeme así:\n\n"
+        "1. Deporte (running/bici)\n"
+        "2. Tiempo (min)\n"
+        "3. Fatiga (0-10)\n"
+        "4. Ayer intensidad (si/no)\n\n"
         "Ejemplo:\n"
-        "running 45min umbral fatiga 5 nivel medio"
+        "running 45 6 si"
     )
 
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text
-    respuesta = generar_sesion(texto)
+    texto = update.message.text.lower().split()
+
+    try:
+        deporte = texto[0]
+        tiempo = int(texto[1])
+        fatiga = int(texto[2])
+        ayer = texto[3] == "si"
+
+        respuesta = generar_entreno(deporte, tiempo, fatiga, ayer)
+
+    except:
+        respuesta = "❌ Formato incorrecto.\nEjemplo: running 45 6 si"
+
     await update.message.reply_text(respuesta)
 
 
