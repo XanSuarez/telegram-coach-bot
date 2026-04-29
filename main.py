@@ -16,9 +16,15 @@ def decidir_tipo(fatiga, ayer_intensidad):
         if ayer_intensidad:
             return "aerobico", "suave"
         else:
-            return "umbral", "aerobico"
+            return "tempo", "aerobico"
 
-    if fatiga <= 5:
+    if fatiga >= 4:
+        if ayer_intensidad:
+            return "aerobico", "tempo"
+        else:
+            return "umbral", "tempo"
+
+    if fatiga <= 3:
         if ayer_intensidad:
             return "tempo", "aerobico"
         else:
@@ -57,10 +63,16 @@ def sesion_bici(tipo, tiempo):
         return f"{tiempo}’ Z2"
 
     if tipo == "tempo":
-        return "15’ + 2x12’ tempo + 10’"
+        if tiempo >= 90:
+            return "20’ + 3x12’ tempo (rec 4’) + 10’"
+        else:
+            return "15’ + 2x10’ tempo + 10’"
 
     if tipo == "umbral":
-        return "15’ + 3x10’ FTP + 10’"
+        if tiempo >= 90:
+            return "15’ + 2x15’ FTP (rec 5’) + 10’"
+        else:
+            return "15’ + 3x8’ FTP + 10’"
 
     if tipo == "vo2":
         return "15’ + 6x3’ fuerte + 10’"
@@ -97,6 +109,9 @@ Ayer intensidad: {"Sí" if ayer else "No"}
 
 💡 Ajustado automáticamente según carga reciente
 """
+
+💡 Recomendación:
+Si las piernas no responden → convierte a Z2 continua
 
 
 # -------------------------
