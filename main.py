@@ -21,49 +21,11 @@ def get_user(user_id):
         }
     return user_db[user_id]
 
-# -------------------------
-# LÓGICA ENTRENAMIENTO
-# -------------------------
-def calcular_carga(historial):
-    return sum([s["duracion"] for s in historial[-3:]])
-
-def intensidad_reciente(historial):
-    return any(s["tipo"] in ["vo2", "umbral"] for s in historial[-2:])
-
-def decidir(fatiga, historial):
-    carga = calcular_carga(historial)
-    intensidad = intensidad_reciente(historial)
-
-    if fatiga >= 8 or carga > 180:
-        return "suave", "movilidad"
-
-    if fatiga >= 6:
-        return ("aerobico","suave") if intensidad else ("tempo","aerobico")
-
-    if fatiga >= 4:
-        return ("aerobico","tempo") if intensidad else ("umbral","tempo")
-
-    return ("tempo","aerobico") if intensidad else ("vo2","umbral")
+def tiene_contexto(user):
+    return user.get("ultimo_entreno") is not None
 
 # -------------------------
-# SESIONES
-# -------------------------
-def sesion_bici(tipo, t):
-    if tipo=="suave": return f"{t}’ Z1-Z2"
-    if tipo=="aerobico": return f"{t}’ Z2"
-    if tipo=="tempo": return "20’ + 3x12’ tempo (rec 4’) + 10’"
-    if tipo=="umbral": return "15’ + 3x10’ FTP (rec 5’) + 10’"
-    if tipo=="vo2": return "15’ + 6x3’ fuerte (rec 3’) + 10’"
-
-def sesion_run(tipo, t):
-    if tipo=="suave": return f"{t}’ suave"
-    if tipo=="aerobico": return f"{t}’ Z2"
-    if tipo=="tempo": return "10’ + 2x10’ tempo (rec 2’) + 10’"
-    if tipo=="umbral": return "10’ + 3x8’ umbral (rec 2’) + 10’"
-    if tipo=="vo2": return "10’ + 5x3’ fuerte (rec 2’) + 10’"
-
-# -------------------------
-# GPT CONTEXTUAL
+# GPT (FORMATO PRO)
 # -------------------------
 def preguntar_gpt(msg, user):
 
@@ -74,31 +36,81 @@ def preguntar_gpt(msg, user):
 Eres un entrenador profesional de triatlón.
 
 IMPORTANTE:
-- Responde SIEMPRE en formato claro y estructurado
-- Usa emojis para mejorar la lectura
-- Sé directo, nada de textos largos tipo blog
-- Adapta la respuesta a entrenamiento real (no genérico)
-- Prioriza utilidad práctica
-- Usa ritmos o zonas (Z1 a Z5, basadas en %FTP, %2ºUmbral etc)
-- Evita planes semanales largos
-- Responde solo al día actual salvo que se pida lo contrario
+- NO generes entrenamientos si faltan datos
+- Responde claro, estructurado y práctico
+- Usa emojis para mejorar lectura
+- Nada de texto largo tipo blog
 
-Formato obligatorio:
+Contexto atleta:
+- Últimas sesiones: {[s["tipo"] for s in historial[-3:]]}
+- Carga reciente: {sum([s["duracion"] for s in historial[-3:]])} min
+- Último entreno: {ultimo}
 
-📊 Contexto breve (si aplica)
+Formato:
+
+📊 Contexto breve
+
+🎯 Respuesta / ajuste / explicación
+
+🔁 Alternativa si aplica
+
+💡 Nota breve
+"""
+
+    prompt = contexto + f"\n\nMensaje del atleta:\n{msg}"
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        print("ERROR GPT:", e)
+        return "⚠️ Error conectando con el entrenador."
+
+# -------------------------
+# GENERAR ENTRENAMIENTO CON GPT
+# -------------------------
+def generar_entreno_gpt(user, deporte, tiempo, fatiga):
+
+    historial = user.get("historial", [])
+    carga = sum([s["duracion"] for s in historial[-3:]])
+
+    prompt = f"""
+Eres un entrenador profesional de triatlón.
+
+Genera SOLO un entrenamiento para HOY.
+
+Datos:
+- Deporte: {deporte}
+- Tiempo: {tiempo} min
+- Fatiga: {fatiga}/10
+- Carga reciente: {carga}
+- Últimas sesiones: {[s["tipo"] for s in historial[-3:]]}
+
+REGLAS:
+- Estructura clara
+- No plan semanal
+- Ajustar intensidad a fatiga
+- Incluir descansos
+- Añadir alternativa
+
+FORMATO:
+
+📊 Fatiga: X/10
 
 🎯 Entrenamiento:
 - Calentamiento:
 - Bloque principal:
 - Vuelta a la calma:
 
-🔁 Alternativa (más suave)
+🔁 Alternativa:
 
-💡 Nota breve de entrenador
-
+💡 Nota breve entrenador
 """
-
-    prompt = contexto + f"\n\nPetición del atleta:\n{msg}"
 
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
@@ -108,16 +120,17 @@ Formato obligatorio:
     return response.choices[0].message.content
 
 # -------------------------
-# FLUJO
+# START
 # -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
+
     user["estado"] = "deporte"
 
-    teclado = [["Running","Bici"]]
+    teclado = [["Running", "Bici"]]
 
     await update.message.reply_text(
-        "🏃‍♂️ ¿Qué vas a entrenar?",
+        "🏃‍♂️ Vamos a entrenar\n\n¿Qué vas a entrenar hoy?",
         reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
     )
 
@@ -129,48 +142,24 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     texto = update.message.text.lower()
 
-    # 👉 GPT SIEMPRE FUERA DE FLUJO
-    if user["estado"] is None:
-        respuesta = preguntar_gpt(texto, user)
-        await update.message.reply_text(respuesta)
-        return
+    # -------------------------
+    # SIN CONTEXTO → FORZAR FLUJO
+    # -------------------------
+    if not tiene_contexto(user) and user["estado"] is None:
 
-    # 👉 FLUJO GUIADO
-    if user["estado"] == "deporte":
-        user["datos_temp"]["deporte"] = texto
-        user["estado"] = "tiempo"
+        user["estado"] = "deporte"
 
-        teclado = [["30","45","60"],["90","120"]]
+        teclado = [["Running", "Bici"]]
 
         await update.message.reply_text(
-            "⏱ ¿Cuánto tiempo?",
+            "🏃‍♂️ Antes de recomendarte nada necesito algunos datos\n\n¿Qué vas a entrenar?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
 
     # -------------------------
-    # COMANDOS INTELIGENTES
-    # -------------------------
-    if user["estado"] is None:
-
-        if "suave" in texto:
-            return await update.message.reply_text("👌 Haz Z2 suave hoy")
-
-        if "más intensidad" in texto or "mas intensidad" in texto:
-            return await update.message.reply_text("⚡ Puedes subir a tempo o añadir bloques")
-
-        if "mañana" in texto:
-            return await update.message.reply_text("📅 Mañana mejor aeróbico si hoy cargas")
-
-        # 👉 GPT automático
-        respuesta = preguntar_gpt(texto, user)
-        await update.message.reply_text(respuesta)
-        return
-
-    # -------------------------
     # FLUJO GUIADO
     # -------------------------
-
     if user["estado"] == "deporte":
         user["datos_temp"]["deporte"] = texto
         user["estado"] = "tiempo"
@@ -178,7 +167,7 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         teclado = [["30","45","60"],["90","120"]]
 
         await update.message.reply_text(
-            "⏱ ¿Cuánto tiempo?",
+            "⏱ ¿Cuánto tiempo tienes?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -190,7 +179,7 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         teclado = [["1","2","3","4","5"],["6","7","8","9","10"]]
 
         await update.message.reply_text(
-            "😵 ¿Fatiga?",
+            "😵 ¿Nivel de fatiga?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -200,37 +189,34 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         deporte = user["datos_temp"]["deporte"]
         tiempo = user["datos_temp"]["tiempo"]
 
-        tipo1, tipo2 = decidir(fatiga, user["historial"])
+        respuesta = generar_entreno_gpt(user, deporte, tiempo, fatiga)
 
-        if "bici" in deporte:
-            s1 = sesion_bici(tipo1, tiempo)
-            s2 = sesion_bici(tipo2, tiempo)
-        else:
-            s1 = sesion_run(tipo1, tiempo)
-            s2 = sesion_run(tipo2, tiempo)
-
-        user["historial"].append({"tipo": tipo1, "duracion": tiempo})
+        user["historial"].append({
+            "tipo": "auto",
+            "duracion": tiempo
+        })
 
         user["ultimo_entreno"] = {
-            "tipo": tipo1,
+            "deporte": deporte,
+            "tiempo": tiempo,
             "fatiga": fatiga
         }
 
         user["estado"] = None
 
         await update.message.reply_text(
-            f"""📊 Fatiga: {fatiga}/10
-
-🎯 {tipo1.upper()}
-{s1}
-
-🔁 Alternativa:
-{tipo2.upper()}
-{s2}
-
-💡 Ajusta según sensaciones""",
+            respuesta,
             reply_markup=ReplyKeyboardRemove()
         )
+        return
+
+    # -------------------------
+    # MODO CONVERSACIÓN (GPT)
+    # -------------------------
+    if user["estado"] is None:
+        respuesta = preguntar_gpt(texto, user)
+        await update.message.reply_text(respuesta)
+        return
 
 # -------------------------
 # APP
