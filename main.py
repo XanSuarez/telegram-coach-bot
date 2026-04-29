@@ -6,6 +6,9 @@ from openai import OpenAI
 TOKEN = os.getenv("TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# -------------------------
+# BASE DE DATOS
+# -------------------------
 user_db = {}
 
 def get_user(user_id):
@@ -25,10 +28,7 @@ def calcular_carga(historial):
     return sum([s["duracion"] for s in historial[-3:]])
 
 def intensidad_reciente(historial):
-    for s in reversed(historial[-2:]):
-        if s["tipo"] in ["vo2", "umbral"]:
-            return True
-    return False
+    return any(s["tipo"] in ["vo2", "umbral"] for s in historial[-2:])
 
 def decidir(fatiga, historial):
     carga = calcular_carga(historial)
@@ -51,40 +51,51 @@ def decidir(fatiga, historial):
 def sesion_bici(tipo, t):
     if tipo=="suave": return f"{t}’ Z1-Z2"
     if tipo=="aerobico": return f"{t}’ Z2"
-    if tipo=="tempo": return "20’ + 3x12’ tempo + 10’"
-    if tipo=="umbral": return "15’ + 3x10’ FTP + 10’"
-    if tipo=="vo2": return "15’ + 6x3’ fuerte + 10’"
+    if tipo=="tempo": return "20’ + 3x12’ tempo (rec 4’) + 10’"
+    if tipo=="umbral": return "15’ + 3x10’ FTP (rec 5’) + 10’"
+    if tipo=="vo2": return "15’ + 6x3’ fuerte (rec 3’) + 10’"
 
 def sesion_run(tipo, t):
     if tipo=="suave": return f"{t}’ suave"
     if tipo=="aerobico": return f"{t}’ Z2"
-    if tipo=="tempo": return "10’ + 2x10’ tempo + 10’"
-    if tipo=="umbral": return "10’ + 3x8’ umbral + 10’"
-    if tipo=="vo2": return "10’ + 5x3’ fuerte + 10’"
+    if tipo=="tempo": return "10’ + 2x10’ tempo (rec 2’) + 10’"
+    if tipo=="umbral": return "10’ + 3x8’ umbral (rec 2’) + 10’"
+    if tipo=="vo2": return "10’ + 5x3’ fuerte (rec 2’) + 10’"
 
 # -------------------------
-# GPT
+# GPT CONTEXTUAL
 # -------------------------
 def preguntar_gpt(msg, user):
-    ctx = user.get("ultimo_entreno")
+
+    historial = user.get("historial", [])
+    ultimo = user.get("ultimo_entreno")
+
+    resumen = ", ".join([s["tipo"] for s in historial[-3:]])
+    carga = calcular_carga(historial)
 
     contexto = f"""
-Fatiga: {ctx['fatiga']}/10
-Tipo: {ctx['tipo']}
-Carga: {ctx['carga']}
-""" if ctx else ""
+Eres un entrenador experto en triatlón.
+
+Contexto:
+- Últimas sesiones: {resumen}
+- Carga reciente: {carga} min
+"""
+
+    if ultimo:
+        contexto += f"""
+- Último entreno:
+  Tipo: {ultimo['tipo']}
+  Fatiga: {ultimo['fatiga']}
+"""
+
+    prompt = contexto + f"\n\nPregunta:\n{msg}"
 
     r = client.chat.completions.create(
         model="gpt-4.1-mini",
-        messages=[
-            {"role":"system","content":"Eres entrenador experto en triatlón"},
-            {"role":"user","content":contexto + "\n\n" + msg}
-        ]
+        messages=[{"role":"user","content":prompt}]
     )
-    return r.choices[0].message.content
 
-def es_pregunta(t):
-    return any(x in t for x in ["?", "por", "como", "que"])
+    return r.choices[0].message.content
 
 # -------------------------
 # FLUJO
@@ -100,19 +111,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
     )
 
+# -------------------------
+# MANEJADOR PRINCIPAL
+# -------------------------
 async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     texto = update.message.text.lower()
 
-    # 👉 GPT conversación
-    # 👉 Si no estamos en flujo → GPT
+    # -------------------------
+    # COMANDOS INTELIGENTES
+    # -------------------------
     if user["estado"] is None:
+
+        if "suave" in texto:
+            return await update.message.reply_text("👌 Haz Z2 suave hoy")
+
+        if "más intensidad" in texto or "mas intensidad" in texto:
+            return await update.message.reply_text("⚡ Puedes subir a tempo o añadir bloques")
+
+        if "mañana" in texto:
+            return await update.message.reply_text("📅 Mañana mejor aeróbico si hoy cargas")
+
+        # 👉 GPT automático
         respuesta = preguntar_gpt(texto, user)
         await update.message.reply_text(respuesta)
         return
 
     # -------------------------
-    # ESTADOS
+    # FLUJO GUIADO
     # -------------------------
 
     if user["estado"] == "deporte":
@@ -134,7 +160,7 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         teclado = [["1","2","3","4","5"],["6","7","8","9","10"]]
 
         await update.message.reply_text(
-            "😵 ¿Nivel de fatiga?",
+            "😵 ¿Fatiga?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -156,9 +182,8 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["historial"].append({"tipo": tipo1, "duracion": tiempo})
 
         user["ultimo_entreno"] = {
-            "fatiga": fatiga,
             "tipo": tipo1,
-            "carga": calcular_carga(user["historial"])
+            "fatiga": fatiga
         }
 
         user["estado"] = None
@@ -173,7 +198,7 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {tipo2.upper()}
 {s2}
 
-💡 Si no te ves bien → Z2""",
+💡 Ajusta según sensaciones""",
             reply_markup=ReplyKeyboardRemove()
         )
 
