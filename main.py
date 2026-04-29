@@ -114,18 +114,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------
 # MANEJADOR PRINCIPAL
 # -------------------------
-texto = update.message.text.lower()
-user = get_user(update.effective_user.id)
+async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-# 👉 1. Si estamos en flujo → seguir flujo
-if user["estado"] is not None:
-    pass  # sigue abajo con flujo
+    user = get_user(update.effective_user.id)
+    texto = update.message.text.lower()
 
-else:
-    # 👉 2. TODO lo demás → GPT directo
-    respuesta = preguntar_gpt(texto, user)
-    await update.message.reply_text(respuesta)
-    return
+    # 👉 GPT SIEMPRE FUERA DE FLUJO
+    if user["estado"] is None:
+        respuesta = preguntar_gpt(texto, user)
+        await update.message.reply_text(respuesta)
+        return
+
+    # 👉 FLUJO GUIADO
+    if user["estado"] == "deporte":
+        user["datos_temp"]["deporte"] = texto
+        user["estado"] = "tiempo"
+
+        teclado = [["30","45","60"],["90","120"]]
+
+        await update.message.reply_text(
+            "⏱ ¿Cuánto tiempo?",
+            reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
+        )
+        return
 
     # -------------------------
     # COMANDOS INTELIGENTES
