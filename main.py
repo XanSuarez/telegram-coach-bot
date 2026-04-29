@@ -1,35 +1,64 @@
 import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from openai import OpenAI
 
+# -------------------------
+# CONFIG
+# -------------------------
 TOKEN = os.getenv("TOKEN")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# -------------------------
+# BASE DE DATOS SIMPLE
+# -------------------------
+user_db = {}
+
+def get_user(user_id):
+    if user_id not in user_db:
+        user_db[user_id] = {"historial": []}
+    return user_db[user_id]
+
+# -------------------------
+# CARGA E INTENSIDAD
+# -------------------------
+def calcular_carga(historial):
+    return sum([s["duracion"] for s in historial[-3:]])
+
+def intensidad_reciente(historial):
+    for s in reversed(historial[-2:]):
+        if s["tipo"] in ["vo2", "umbral"]:
+            return True
+    return False
 
 # -------------------------
 # DECISIÓN ENTRENAMIENTO
 # -------------------------
-def decidir_tipo(fatiga, ayer_intensidad):
+def decidir_con_carga(fatiga, historial):
 
-    if fatiga >= 8:
+    carga = calcular_carga(historial)
+    hubo_intensidad = intensidad_reciente(historial)
+
+    if fatiga >= 8 or carga > 180:
         return "suave", "movilidad"
 
     if fatiga >= 6:
-        if ayer_intensidad:
+        if hubo_intensidad:
             return "aerobico", "suave"
         else:
             return "tempo", "aerobico"
 
     if fatiga >= 4:
-        if ayer_intensidad:
+        if hubo_intensidad:
             return "aerobico", "tempo"
         else:
             return "umbral", "tempo"
 
     if fatiga <= 3:
-        if ayer_intensidad:
+        if hubo_intensidad:
             return "tempo", "aerobico"
         else:
             return "vo2", "umbral"
-
 
 # -------------------------
 # SESIONES
@@ -75,17 +104,16 @@ def sesion_bici(tipo, tiempo):
             return "15’ + 3x8’ FTP + 10’"
 
     if tipo == "vo2":
-        return "15’ + 6x3’ fuerte + 10’"
+        return "15’ + 6x3’ fuerte (rec 3’) + 10’"
 
     return "Salida libre"
-
 
 # -------------------------
 # GENERADOR FINAL
 # -------------------------
-def generar_entreno(deporte, tiempo, fatiga, ayer):
+def generar_entreno(deporte, tiempo, fatiga, user):
 
-    tipo1, tipo2 = decidir_tipo(fatiga, ayer)
+    tipo1, tipo2 = decidir_con_carga(fatiga, user["historial"])
 
     if deporte == "running":
         s1 = sesion_running(tipo1, tiempo)
@@ -97,7 +125,7 @@ def generar_entreno(deporte, tiempo, fatiga, ayer):
     return f"""
 📊 Análisis:
 Fatiga: {fatiga}/10
-Ayer intensidad: {"Sí" if ayer else "No"}
+Carga reciente: {calcular_carga(user["historial"])} min
 
 🎯 Opción recomendada:
 {tipo1.upper()}
@@ -107,42 +135,83 @@ Ayer intensidad: {"Sí" if ayer else "No"}
 {tipo2.upper()}
 {s2}
 
-💡 Ajustado automáticamente según carga reciente
+💡 Si no te encuentras bien → pasa a Z2 continua
 """
 
-💡 Recomendación:
-Si las piernas no responden → convierte a Z2 continua
+# -------------------------
+# GUARDAR SESIÓN
+# -------------------------
+def guardar_sesion(user, tipo, duracion):
+    user["historial"].append({
+        "tipo": tipo,
+        "duracion": duracion
+    })
 
+# -------------------------
+# CHATGPT
+# -------------------------
+def preguntar_gpt(mensaje):
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "Eres un entrenador experto en triatlón y deportes de resistencia."
+            },
+            {
+                "role": "user",
+                "content": mensaje
+            }
+        ]
+    )
+
+    return response.choices[0].message.content
 
 # -------------------------
 # TELEGRAM
 # -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🏃‍♂️ Entrenador XS\n\n"
+        "🏃‍♂️ Entrenador XS PRO\n\n"
         "Respóndeme así:\n\n"
         "1. Deporte (running/bici)\n"
         "2. Tiempo (min)\n"
-        "3. Fatiga (0-10)\n"
-        "4. Ayer intensidad (si/no)\n\n"
+        "3. Fatiga (0-10)\n\n"
         "Ejemplo:\n"
-        "running 45 6 si"
+        "running 45 6\n\n"
+        "También puedes preguntarme dudas 😉"
     )
 
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.lower().split()
+
+    texto = update.message.text.lower()
+
+    # 👉 modo conversación (ChatGPT)
+    if "?" in texto or "por que" in texto or "explica" in texto:
+        respuesta = preguntar_gpt(texto)
+        await update.message.reply_text(respuesta)
+        return
+
+    # 👉 modo entrenamiento
+    partes = texto.split()
 
     try:
-        deporte = texto[0]
-        tiempo = int(texto[1])
-        fatiga = int(texto[2])
-        ayer = texto[3] == "si"
+        deporte = partes[0]
+        tiempo = int(partes[1])
+        fatiga = int(partes[2])
 
-        respuesta = generar_entreno(deporte, tiempo, fatiga, ayer)
+        user = get_user(update.effective_user.id)
+
+        respuesta = generar_entreno(deporte, tiempo, fatiga, user)
+
+        # guardamos sesión principal
+        tipo1, _ = decidir_con_carga(fatiga, user["historial"])
+        guardar_sesion(user, tipo1, tiempo)
 
     except:
-        respuesta = "❌ Formato incorrecto.\nEjemplo: running 45 6 si"
+        respuesta = "❌ Formato incorrecto.\nEjemplo: running 45 6"
 
     await update.message.reply_text(respuesta)
 
