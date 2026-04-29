@@ -67,25 +67,45 @@ def sesion_run(tipo, t):
 # -------------------------
 def preguntar_gpt(msg, user):
 
-    try:
-        print("👉 LLAMANDO A GPT...")
-        print("Mensaje:", msg)
+    historial = user.get("historial", [])
+    ultimo = user.get("ultimo_entreno")
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Eres entrenador de triatlón"},
-                {"role": "user", "content": msg}
-            ]
-        )
+    contexto = f"""
+Eres un entrenador profesional de triatlón.
 
-        print("✅ RESPUESTA GPT OK")
+IMPORTANTE:
+- Responde SIEMPRE en formato claro y estructurado
+- Usa emojis para mejorar la lectura
+- Sé directo, nada de textos largos tipo blog
+- Adapta la respuesta a entrenamiento real (no genérico)
+- Prioriza utilidad práctica
+- Usa ritmos o zonas (Z1 a Z5, basadas en %FTP, %2ºUmbral etc)
+- Evita planes semanales largos
+- Responde solo al día actual salvo que se pida lo contrario
 
-        return response.choices[0].message.content
+Formato obligatorio:
 
-    except Exception as e:
-        print("❌ ERROR GPT:", e)
-        return "⚠️ Error conectando con el coach. Inténtalo otra vez."
+📊 Contexto breve (si aplica)
+
+🎯 Entrenamiento:
+- Calentamiento:
+- Bloque principal:
+- Vuelta a la calma:
+
+🔁 Alternativa (más suave)
+
+💡 Nota breve de entrenador
+
+"""
+
+    prompt = contexto + f"\n\nPetición del atleta:\n{msg}"
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    return response.choices[0].message.content
 
 # -------------------------
 # FLUJO
