@@ -197,11 +197,19 @@ Contexto del atleta:
 # -------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🏃‍♂️ Entrenador XS PRO\n\n"
-        "Responde así:\n"
-        "running 45 6\n"
-        "bici 90 5\n\n"
-        "También puedes preguntarme cosas 😉"
+        "🏃‍♂️ *Entrenador XS*\n\n"
+        "Respóndeme en UNA línea así 👇\n\n"
+        "👉 running 45 6\n"
+        "👉 bici 90 5\n\n"
+        "📌 Significa:\n"
+        "- deporte (running o bici)\n"
+        "- tiempo en minutos\n"
+        "- fatiga (0-10)\n\n"
+        "💡 Ejemplo real:\n"
+        "bici 120 7\n\n"
+        "🤖 También puedes preguntarme:\n"
+        "👉 ¿Por qué no hago VO2?",
+        parse_mode="Markdown"
     )
 
 
