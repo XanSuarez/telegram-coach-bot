@@ -114,9 +114,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------------------------
 # MANEJADOR PRINCIPAL
 # -------------------------
-async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    texto = update.message.text.lower()
+texto = update.message.text.lower()
+user = get_user(update.effective_user.id)
+
+# 👉 1. Si estamos en flujo → seguir flujo
+if user["estado"] is not None:
+    pass  # sigue abajo con flujo
+
+else:
+    # 👉 2. TODO lo demás → GPT directo
+    respuesta = preguntar_gpt(texto, user)
+    await update.message.reply_text(respuesta)
+    return
 
     # -------------------------
     # COMANDOS INTELIGENTES
