@@ -6,7 +6,7 @@ from openai import OpenAI
 # =========================
 # CONFIG
 # =========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -14,7 +14,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 users = {}
 
 # =========================
-# UTILIDADES
+# USER HELPERS
 # =========================
 def get_user(user_id):
     if user_id not in users:
@@ -28,119 +28,121 @@ def get_user(user_id):
         }
     return users[user_id]
 
+
 def reset_user(user):
     user["estado"] = None
     user["deporte"] = None
     user["tiempo"] = None
     user["fatiga"] = None
 
-# =========================
-# MOTOR DECISIÓN
-# =========================
-def decidir_tipo_sesion(user):
 
-    fatiga = user["fatiga"]
-    ultimo = user.get("ultima_sesion_tipo", None)
-
-    if fatiga >= 8:
-        return "recuperacion"
-
-    if ultimo == "intensidad":
-        return "aerobico"
-
-    if 5 <= fatiga <= 7:
-        return "tempo"
-
-    if fatiga <= 4:
-        return "intensidad"
-
-    return "aerobico"
-
-# =========================
-# MEMORIA
-# =========================
-def actualizar_memoria(user, tipo, duracion):
-    user["ultima_sesion_tipo"] = tipo
-
-    historial = user.get("historial", [])
-    historial.append({
+def actualizar_memoria(user, tipo, tiempo):
+    user["historial"].append({
         "tipo": tipo,
-        "duracion": duracion
+        "tiempo": tiempo
     })
 
-    user["historial"] = historial[-5:]
 
 # =========================
-# PROMPT GPT
+# GPT
 # =========================
-def generar_prompt(user, tipo_sesion):
-
-    return f"""
-Eres un entrenador profesional de triatlón.
-
-DATOS:
-- Deporte: {user["deporte"]}
-- Tiempo: {user["tiempo"]} min
-- Fatiga: {user["fatiga"]}/10
-- Tipo sesión: {tipo_sesion}
-- Métrica: {user.get("perfil", {}).get("metrica", "fc")}
-- Historial: {user.get("historial", [])}
-
-REGLAS:
-- Usa zonas Z1-Z5
-- No repitas sesiones típicas
-- Sé específico y técnico
-- Natación SIEMPRE con técnica
-- Explica el por qué
-
-FORMATO:
-
-🏁 Contexto breve
-
-🎯 Objetivo
-
-🔥 Entrenamiento:
-- Calentamiento
-- Bloque principal
-- Técnica (si aplica)
-- Vuelta a la calma
-
-🔁 Alternativa
-
-💡 Nota entrenador
-"""
-
 def llamar_gpt(prompt):
+
     try:
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Entrenador de triatlón experto"},
+                {"role": "system", "content": "Eres un entrenador profesional de triatlón."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7
         )
+
         return response.choices[0].message.content
 
     except Exception as e:
-        return f"❌ Error GPT: {e}"
+        print("❌ ERROR GPT:", e)
+        return "⚠️ Error con GPT. Revisa tu cuota o API key."
+
 
 # =========================
-# HANDLERS
+# LÓGICA ENTRENAMIENTO
 # =========================
+def decidir_tipo_sesion(user):
 
+    fatiga = user["fatiga"]
+
+    if fatiga >= 8:
+        return "recuperacion"
+    elif fatiga >= 6:
+        return "aerobico"
+    elif fatiga >= 4:
+        return "tempo"
+    else:
+        return "intensidad"
+
+
+def generar_prompt(user, tipo):
+
+    metrica = user.get("perfil", {}).get("metrica", "fc")
+
+    return f"""
+Eres un entrenador de triatlón de alto nivel.
+
+Genera UN entrenamiento COMPLETO, estructurado y profesional.
+
+DATOS:
+- Deporte: {user["deporte"]}
+- Tiempo disponible: {user["tiempo"]} min
+- Fatiga: {user["fatiga"]}/10
+- Tipo sesión: {tipo}
+- Métrica: {metrica}
+
+REQUISITOS:
+- Estructura clara con emojis
+- Calentamiento
+- Parte principal (series detalladas)
+- Vuelta a la calma
+- Explicación breve
+
+IMPORTANTE:
+- Usa zonas Z1-Z5
+- Sé específico (NO genérico tipo "30 min natación")
+- Incluye descansos, repeticiones y objetivos
+- Nivel triatleta amateur competitivo
+
+FORMATO:
+
+📊 Contexto breve
+
+🏁 Objetivo
+
+🔥 Entrenamiento:
+- Calentamiento:
+- Bloque principal:
+- Vuelta a la calma:
+
+🔁 Alternativa
+
+💡 Nota del entrenador
+"""
+
+
+# =========================
+# START
+# =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(update.effective_user.id)
 
-    # Pregunta métrica solo 1 vez
     if "metrica" not in user["perfil"]:
+
         user["estado"] = "metrica"
 
-        teclado = [["Potencia", "Frecuencia cardíaca", "Ritmo"]]
+        teclado = [["Potencia", "Ritmo", "Frecuencia cardíaca"]]
 
         await update.message.reply_text(
-            "📊 ¿Cómo entrenas normalmente?",
+            "👋 Soy tu entrenador XS\n\nAntes de empezar:\n\n¿Con qué te guías?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -155,16 +157,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# =========================
+# MANEJADOR
+# =========================
 async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(update.effective_user.id)
     texto = update.message.text.lower()
 
     # =========================
-    # FLUJO GUIADO
+    # DETECTAR INTENCIÓN CON GPT
     # =========================
+    if user["estado"] is None:
 
+        prompt_intencion = f"""
+El usuario ha dicho: "{texto}"
+
+¿Está pidiendo un entrenamiento?
+
+Responde SOLO SI o NO
+"""
+
+        decision = llamar_gpt(prompt_intencion).strip().upper()
+
+        if "SI" in decision:
+
+            if "metrica" not in user["perfil"]:
+                user["estado"] = "metrica"
+
+                teclado = [["Potencia", "Ritmo", "Frecuencia cardíaca"]]
+
+                await update.message.reply_text(
+                    "📊 ¿Cómo te guías normalmente?",
+                    reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
+                )
+                return
+
+            user["estado"] = "deporte"
+
+            teclado = [["Running", "Bici", "Natación"]]
+
+            await update.message.reply_text(
+                "💡 Para ajustar bien el entrenamiento:\n\n🏃‍♂️ ¿Qué vas a entrenar?",
+                reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
+            )
+            return
+
+        # 👉 Conversación libre GPT
+        respuesta = llamar_gpt(texto)
+        await update.message.reply_text(respuesta)
+        return
+
+    # =========================
+    # MÉTRICA
+    # =========================
     if user["estado"] == "metrica":
+
         if "potencia" in texto:
             user["perfil"]["metrica"] = "potencia"
         elif "ritmo" in texto:
@@ -177,21 +225,27 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         teclado = [["Running", "Bici", "Natación"]]
 
         await update.message.reply_text(
-            "Perfecto 👌\n\n🏃‍♂️ ¿Qué vas a entrenar hoy?",
+            "Perfecto 👌\n\n🏃‍♂️ ¿Qué vas a entrenar?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
 
-
+    # =========================
+    # DEPORTE
+    # =========================
     if user["estado"] == "deporte":
+
         user["deporte"] = texto
         user["estado"] = "tiempo"
 
         await update.message.reply_text("⏱️ ¿Cuántos minutos tienes?")
         return
 
-
+    # =========================
+    # TIEMPO
+    # =========================
     if user["estado"] == "tiempo":
+
         if not texto.isdigit():
             await update.message.reply_text("Pon solo un número (ej: 60)")
             return
@@ -202,15 +256,17 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("😵 ¿Nivel de fatiga? (0-10)")
         return
 
-
+    # =========================
+    # FATIGA
+    # =========================
     if user["estado"] == "fatiga":
+
         if not texto.isdigit():
             await update.message.reply_text("Pon un número del 0 al 10")
             return
 
         user["fatiga"] = int(texto)
 
-        # 🔥 GENERAR ENTRENAMIENTO
         tipo = decidir_tipo_sesion(user)
         prompt = generar_prompt(user, tipo)
         respuesta = llamar_gpt(prompt)
@@ -223,29 +279,15 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    # =========================
-    # MODO CONVERSACIONAL GPT
-    # =========================
-    prompt = f"""
-Eres un entrenador de triatlón.
-
-Usuario dice: {texto}
-
-Responde de forma útil, técnica y clara.
-"""
-
-    respuesta = llamar_gpt(prompt)
-
-    await update.message.reply_text(respuesta)
-
-
 # =========================
-# MAIN
+# RUN
 # =========================
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+if __name__ == "__main__":
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar))
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-print("Bot en marcha 🚀")
-app.run_polling()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar))
+
+    print("🚀 Bot corriendo...")
+    app.run_polling()
