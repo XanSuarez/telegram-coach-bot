@@ -270,3 +270,15 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         actualizar_memoria(user, tipo)
         reset_user(user)
+
+print("🚀 Iniciando bot...")
+
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+print("✅ Bot creado correctamente")
+
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar))
+
+print("📡 Ejecutando polling...")
+
+app.run_polling()
