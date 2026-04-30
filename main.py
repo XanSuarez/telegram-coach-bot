@@ -135,7 +135,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [["Running", "Bici", "Natación"]]
 
     await update.message.reply_text(
-        "👋 Soy tu entrenador XS Coach\n\n"
+        "👋 Soy tu entrenador XS Endurance Bot\n\n"
         "Voy a ajustar tu sesión como un entrenador real\n\n"
         "🏃‍♂️ ¿Qué vas a entrenar hoy?",
         reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
@@ -163,7 +163,7 @@ Debe:
 - generar curiosidad
 - mencionar entrenador digital
 
-Máx 5 líneas
+Máx 7 líneas
 """
 
         caption = llamar_gpt(prompt)
@@ -182,9 +182,8 @@ Máx 5 líneas
 Fitness training card.
 
 Style:
-- dark background
+- white background
 - premium
-- TrainingPeaks style
 - XS Coach branding
 
 Include:
@@ -215,21 +214,21 @@ Include:
         user["estado"] = "tiempo"
 
         await update.message.reply_text(
-            "⏱️ ¿Cuánto tiempo tienes?\n👉 Ajusto volumen e intensidad"
+            "⏱️ ¿Cuánto tiempo tienes?\n👉 Así justo el volumen e intensidad"
         )
         return
 
     if user["estado"] == "tiempo":
 
         if not texto.isdigit():
-            await update.message.reply_text("Pon minutos (ej: 60)")
+            await update.message.reply_text("Pon cuantos minutos tienes para entrenar (ej: 60)")
             return
 
         user["tiempo"] = int(texto)
         user["estado"] = "fatiga"
 
         await update.message.reply_text(
-            "😵 Fatiga (0-10)\n👉 Ajusto carga"
+            "😵 Fatiga (0-10)\n👉 Así ajusto mejor la carga"
         )
         return
 
