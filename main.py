@@ -232,44 +232,90 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🏃‍♂️ ¿Qué vas a entrenar hoy?")
         return
 
-    # MÉTRICA
-    if user["estado"] == "metrica":
+# =========================
+# PERFIL MÉTRICA
+# =========================
+if user["estado"] == "metrica":
+
+    if "potencia" in texto:
+        user["perfil"]["metrica"] = "potencia"
+    elif "ritmo" in texto:
+        user["perfil"]["metrica"] = "ritmo"
+    else:
         user["perfil"]["metrica"] = "zonas"
-        user["estado"] = "deporte"
 
-        await update.message.reply_text("Perfecto 👌 ¿Qué vas a entrenar?")
+    user["estado"] = "deporte"
+
+    teclado = [["Running", "Bici", "Natación"]]
+
+    await update.message.reply_text(
+        "Perfecto 👌\n\n"
+        "📌 Así puedo ajustar intensidades mejor en tus sesiones\n\n"
+        "👉 Ahora vamos a lo importante:\n"
+        "¿Qué vas a entrenar hoy?",
+        reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
+    )
+    return
+
+
+# =========================
+# DEPORTE
+# =========================
+if user["estado"] == "deporte":
+
+    user["deporte"] = texto
+    user["estado"] = "tiempo"
+
+    await update.message.reply_text(
+        "Bien 👍\n\n"
+        "⏱️ ¿Cuánto tiempo tienes hoy?\n\n"
+        "👉 Esto es clave para ajustar volumen e intensidad"
+    )
+    return
+
+
+# =========================
+# TIEMPO
+# =========================
+if user["estado"] == "tiempo":
+
+    if not texto.isdigit():
+        await update.message.reply_text("Pon solo un número en minutos (ej: 60)")
         return
 
-    # DEPORTE
-    if user["estado"] == "deporte":
-        user["deporte"] = texto
-        user["estado"] = "tiempo"
+    user["tiempo"] = int(texto)
+    user["estado"] = "fatiga"
 
-        await update.message.reply_text("⏱️ ¿Cuánto tiempo tienes?")
+    await update.message.reply_text(
+        "😵 ¿Cómo vas de fatiga hoy?\n\n"
+        "👉 Dímelo del 0 al 10 para ajustar la carga\n"
+        "(0 = fresco, 10 = muy cargado)"
+    )
+    return
+
+
+# =========================
+# FATIGA → GENERAR SESIÓN
+# =========================
+if user["estado"] == "fatiga":
+
+    if not texto.isdigit():
+        await update.message.reply_text("Pon un número del 0 al 10")
         return
 
-    # TIEMPO
-    if user["estado"] == "tiempo":
-        user["tiempo"] = int(texto)
-        user["estado"] = "fatiga"
+    user["fatiga"] = int(texto)
 
-        await update.message.reply_text("😵 Fatiga (0-10)?")
-        return
+    # 🔥 GPT
+    tipo = decidir_tipo_sesion(user)
+    prompt = generar_prompt(user, tipo)
+    respuesta = llamar_gpt(prompt)
 
-    # FATIGA
-    if user["estado"] == "fatiga":
-        user["fatiga"] = int(texto)
+    await update.message.reply_text(respuesta)
 
-        tipo = decidir_tipo_sesion(user)
-        deporte, base = seleccionar_base(user, tipo)
+    actualizar_memoria(user, tipo, user["tiempo"])
+    reset_user(user)
 
-        prompt = generar_prompt(user, tipo, base)
-        respuesta = llamar_gpt(prompt)
-
-        await update.message.reply_text(respuesta)
-
-        actualizar_memoria(user, tipo)
-        reset_user(user)
+    return
 
 print("🚀 Iniciando bot...")
 
