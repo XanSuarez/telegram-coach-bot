@@ -6,8 +6,13 @@ from openai import OpenAI
 # =========================
 # CONFIG
 # =========================
-TELEGRAM_TOKEN = os.getenv("TOKEN")
+TELEGRAM_TOKEN = os.getenv("TOKEN")  # En Railway: TOKEN
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not TELEGRAM_TOKEN:
+    raise ValueError("❌ TOKEN de Telegram no configurado")
+if not OPENAI_API_KEY:
+    raise ValueError("❌ OPENAI_API_KEY no configurado")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -23,7 +28,7 @@ def get_user(user_id):
             "deporte": None,
             "tiempo": None,
             "fatiga": None,
-            "perfil": {},
+            "perfil": {},          # {"metrica": "...", "deporte_base": "..."}
             "historial": []
         }
     return users[user_id]
@@ -41,38 +46,39 @@ def actualizar_memoria(user, tipo, tiempo):
         "tipo": tipo,
         "tiempo": tiempo
     })
+    # Mantener últimas 5
+    user["historial"] = user["historial"][-5:]
 
 
 # =========================
 # GPT
 # =========================
-def llamar_gpt(prompt):
-
+def llamar_gpt(prompt: str) -> str:
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
-                    "content": "Eres un entrenador experto en running, ciclismo y natación para triatletas. Respondes de forma estructurada, clara y profesional."
+                    "content": (
+                        "Eres un entrenador de triatlón experto. "
+                        "Respondes de forma clara, estructurada y profesional."
+                    )
                 },
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7
+            temperature=0.6
         )
-
         return response.choices[0].message.content
-
     except Exception as e:
         print("❌ ERROR GPT:", e)
-        return "⚠️ Error con GPT (posible cuota o API key)."
+        return "⚠️ Error con GPT (revisa cuota o API key)."
 
 
 # =========================
 # LÓGICA ENTRENAMIENTO
 # =========================
 def decidir_tipo_sesion(user):
-
     fatiga = user["fatiga"]
 
     if fatiga >= 8:
@@ -90,14 +96,36 @@ def generar_prompt(user, tipo):
     metrica = user.get("perfil", {}).get("metrica", "fc")
     deporte_base = user.get("perfil", {}).get("deporte_base", user["deporte"])
 
-    # 🔥 REGLA CLAVE NATACIÓN
-    formato_natacion = ""
+    # 🔒 Reglas de métrica (OBLIGATORIO)
+    if metrica == "ritmo":
+        regla_metrica = """
+MÉTRICA (OBLIGATORIO):
+- Usa RITMO (min/km)
+- NO uses frecuencia cardiaca
+- NO uses %FC
+- NO uses potencia
+- Puedes usar referencias: Z2, tempo, umbral, RPE
+"""
+    elif metrica == "potencia":
+        regla_metrica = """
+MÉTRICA (OBLIGATORIO):
+- Usa POTENCIA (W o %FTP)
+- NO uses frecuencia cardiaca
+"""
+    else:
+        regla_metrica = """
+MÉTRICA (OBLIGATORIO):
+- Usa frecuencia cardiaca (zonas) o RPE
+"""
+
+    # 🏊 Regla natación
+    regla_natacion = ""
     if "nat" in deporte_base:
-        formato_natacion = """
-IMPORTANTE PARA NATACIÓN:
-- Estructura SIEMPRE en METROS (NO en minutos)
-- Ejemplo: 200 + 4x50 + 6x100
+        regla_natacion = """
+NATACIÓN (OBLIGATORIO):
+- Estructura SIEMPRE en METROS (NO minutos)
 - Incluir técnica (pull, palas, pies, drills)
+- Ejemplo: 200 + 4x50 + 6x100
 """
 
     return f"""
@@ -108,36 +136,42 @@ Eres un entrenador de alto nivel.
 - NO mezclar deportes
 - NO triatlón combinado
 - NO consejos genéricos
-- TODO debe ser sesión estructurada
+- Sesión estructurada y realista
+- Evitar errores fisiológicos
 
-{formato_natacion}
+{regla_metrica}
+{regla_natacion}
 
 DATOS:
-- Deporte: {user["deporte"]}
-- Tiempo: {user["tiempo"]} min
+- Tiempo disponible: {user["tiempo"]} min
 - Fatiga: {user["fatiga"]}/10
-- Tipo: {tipo}
-- Métrica: {metrica}
+- Tipo sesión: {tipo}
+
+AJUSTE POR FATIGA:
+- Si fatiga ≥7 → evitar alta intensidad, priorizar Z2 / controlado
 
 FORMATO:
 
 📊 Contexto  
-(resumen rápido del día)
+(1-2 líneas coherentes con fatiga y objetivo)
 
 🏁 Objetivo  
 
 🔥 Entrenamiento  
 
 🔹 Calentamiento  
+(detallado)
 
 🔹 Bloque principal  
-(series claras con descansos)
+(series claras, descansos, intensidades correctas)
 
 🔹 Vuelta a la calma  
 
 🔁 Alternativa  
+(más suave o más dura)
 
 💡 Nota entrenador  
+(útil, concreta, no genérica)
 
 ESTILO:
 - Claro
@@ -154,13 +188,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(update.effective_user.id)
 
+    # Preguntar métrica solo una vez
     if "metrica" not in user["perfil"]:
         user["estado"] = "metrica"
 
         teclado = [["Potencia", "Ritmo", "Frecuencia cardíaca"]]
 
         await update.message.reply_text(
-            "👋 Soy tu entrenador XS\n\n¿Con qué te guías?",
+            "📊 Para ajustar bien la intensidad 👇\n\n¿Con qué te sueles guiar al entrenar?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -170,7 +205,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     teclado = [["Running", "Bici", "Natación"]]
 
     await update.message.reply_text(
-        "🏃‍♂️ ¿Qué vas a entrenar hoy?",
+        "🏃‍♂️ Perfecto, vamos con hoy\n\n👉 ¿Qué vas a entrenar?",
         reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
     )
 
@@ -181,30 +216,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(update.effective_user.id)
-    texto = update.message.text.lower()
+    texto = update.message.text.lower().strip()
 
     # =========================
-    # FORZAR FLUJO SIEMPRE
+    # FORZAR FLUJO SIEMPRE (si no estamos en flujo)
     # =========================
     if user["estado"] is None:
 
+        # Si no tiene métrica → primero eso
         if "metrica" not in user["perfil"]:
             user["estado"] = "metrica"
 
             teclado = [["Potencia", "Ritmo", "Frecuencia cardíaca"]]
 
             await update.message.reply_text(
-                "📊 ¿Cómo te guías?",
+                "📊 Antes de empezar:\n\n¿Con qué te guías normalmente?",
                 reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
             )
             return
 
+        # Si ya tiene métrica → iniciar flujo SIEMPRE
         user["estado"] = "deporte"
 
         teclado = [["Running", "Bici", "Natación"]]
 
         await update.message.reply_text(
-            "💡 Necesito 3 datos:\n\n1️⃣ Deporte\n2️⃣ Tiempo\n3️⃣ Fatiga\n\n👉 ¿Qué vas a entrenar?",
+            "💡 Para ajustar bien la sesión necesito 3 cosas:\n\n"
+            "1️⃣ Deporte\n2️⃣ Tiempo disponible\n3️⃣ Fatiga\n\n"
+            "👉 Empezamos:\n\n¿Qué vas a entrenar hoy?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -226,7 +265,7 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         teclado = [["Running", "Bici", "Natación"]]
 
         await update.message.reply_text(
-            "Perfecto 👌\n\n🏃‍♂️ ¿Qué vas a entrenar?",
+            "Perfecto 👌\n\n🏃‍♂️ ¿Qué vas a entrenar hoy?",
             reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
         )
         return
@@ -238,13 +277,15 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user["deporte"] = texto
 
-        # Guardar deporte base
+        # Guardar deporte base si no existe
         if "deporte_base" not in user["perfil"]:
             user["perfil"]["deporte_base"] = texto
 
         user["estado"] = "tiempo"
 
-        await update.message.reply_text("⏱️ ¿Cuántos minutos tienes?")
+        await update.message.reply_text(
+            "⏱️ ¿Cuánto tiempo tienes hoy?\n\n(esto define el tipo de sesión)"
+        )
         return
 
     # =========================
@@ -253,13 +294,15 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user["estado"] == "tiempo":
 
         if not texto.isdigit():
-            await update.message.reply_text("Pon un número (ej: 45)")
+            await update.message.reply_text("Pon solo un número (ej: 45)")
             return
 
         user["tiempo"] = int(texto)
         user["estado"] = "fatiga"
 
-        await update.message.reply_text("😵 ¿Fatiga (0-10)?")
+        await update.message.reply_text(
+            "😵 ¿Cómo estás hoy de fatiga? (0-10)\n\n👉 Esto ajusta la carga"
+        )
         return
 
     # =========================
