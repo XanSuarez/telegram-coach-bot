@@ -16,44 +16,39 @@ logging.basicConfig(level=logging.INFO)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-DEPORTE, METRICA_BICI, TIEMPO, FATIGA, FEEDBACK = range(5)
+DEPORTE, TIEMPO, FATIGA = range(3)
 
 # =========================
-# GPT INTENCIÓN
+# RESPUESTA GPT LIBRE (SALUDO / GENERAL)
 # =========================
-def detectar_intencion(texto):
+def responder_chat(texto):
 
     prompt = f"""
-El usuario dice: "{texto}"
+Responde como un entrenador cercano y profesional.
 
-¿Está pidiendo un entrenamiento o ayuda para entrenar?
+Usuario dice:
+"{texto}"
 
-Responde SOLO:
-SI
-NO
+Si es saludo → responde breve y dirige a entrenar
+Si es duda → responde útil
 """
 
     try:
         r = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0
+            temperature=0.7
         )
-        return "SI" in r.choices[0].message.content.upper()
+        return r.choices[0].message.content
     except:
-        return True  # fallback → mejor asumir que sí
-
+        return "💬 Vamos a entrenar 👇"
 
 # =========================
-# LÓGICA
+# LÓGICA ENTRENAMIENTO
 # =========================
 def decidir_tipo(user):
 
     fatiga = user["fatiga"]
-    tendencia = user.get("tendencia", "neutral")
-
-    if tendencia == "muy_duro":
-        return "recuperacion"
 
     if fatiga >= 8:
         return "recuperacion"
@@ -63,7 +58,6 @@ def decidir_tipo(user):
         return "tempo"
     else:
         return "intensidad"
-
 
 def generar_sesion(user):
 
@@ -77,13 +71,13 @@ def generar_sesion(user):
             return f"{tiempo}’ Z2 + 5x20'' técnica"
 
         if tipo == "tempo":
-            return f"15' + 3x8' Z3 (rec 2') + 10'"
+            return f"15' + 3x8' Z3 + 10'"
 
         if tipo == "intensidad":
             return f"15' + {random.choice(['6x3’ Z4', '8x2’ Z5'])} + 10'"
 
         if tipo == "recuperacion":
-            return f"{tiempo}’ Z1 + movilidad"
+            return f"{tiempo}’ Z1"
 
     if deporte == "bici":
 
@@ -91,10 +85,10 @@ def generar_sesion(user):
             return f"{tiempo}’ Z2 + 5x1’ cadencia"
 
         if tipo == "tempo":
-            return f"20’ + 3x10’ Z3 + 10’"
+            return f"3x10’ Z3"
 
         if tipo == "intensidad":
-            return f"15’ + 5x4’ Z4 + 10’"
+            return f"5x4’ Z4"
 
         if tipo == "recuperacion":
             return f"{tiempo}’ Z1"
@@ -105,22 +99,21 @@ def generar_sesion(user):
             return "300 + 8x100 Z2 + 200"
 
         if tipo == "tempo":
-            return "300 + 5x200 Z3 + 100"
+            return "5x200 Z3"
 
         if tipo == "intensidad":
-            return "300 + 10x100 Z4 + 100"
+            return "10x100 Z4"
 
         if tipo == "recuperacion":
             return "200 + técnica + 200"
 
-
 # =========================
-# GPT RESPUESTA
+# GPT FORMATO
 # =========================
 def generar_prompt(user, base):
 
     return f"""
-Eres entrenador experto.
+Eres entrenador.
 
 Sesión:
 {base}
@@ -140,7 +133,6 @@ FORMATO:
 💡 Nota entrenador
 """
 
-
 def llamar_gpt(prompt):
 
     r = client.chat.completions.create(
@@ -150,14 +142,12 @@ def llamar_gpt(prompt):
     )
     return r.choices[0].message.content
 
-
 # =========================
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
-    context.user_data["tendencia"] = "neutral"
 
     teclado = [["Running", "Bici", "Natación"]]
 
@@ -168,29 +158,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return DEPORTE
 
-
 # =========================
 # AUTO START (CLAVE)
 # =========================
 async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    texto = update.message.text.lower()
+    texto = update.message.text
 
-    if not detectar_intencion(texto):
-        return
-
-    context.user_data.clear()
-    context.user_data["tendencia"] = "neutral"
+    # 👉 RESPONDE SIEMPRE
+    respuesta = responder_chat(texto)
+    await update.message.reply_text(respuesta)
 
     teclado = [["Running", "Bici", "Natación"]]
 
     await update.message.reply_text(
-        "💡 Te ayudo con tu entrenamiento\n\n¿Qué vas a entrenar hoy?",
+        "👉 Vamos con tu sesión\n\n¿Qué vas a entrenar hoy?",
         reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True)
     )
 
     return DEPORTE
-
 
 # =========================
 # FLUJO
@@ -202,7 +188,6 @@ async def deporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏱️ ¿Cuánto tiempo tienes?")
     return TIEMPO
 
-
 async def tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message.text.isdigit():
@@ -213,7 +198,6 @@ async def tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("😵 Fatiga (0-10)")
     return FATIGA
-
 
 async def fatiga(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -231,7 +215,6 @@ async def fatiga(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(respuesta)
 
     return ConversationHandler.END
-
 
 # =========================
 # RUN
