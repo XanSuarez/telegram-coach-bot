@@ -278,33 +278,25 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # =========================
     # FATIGA → GENERAR
     # =========================
-    if user["estado"] == "fatiga":
+    # =========================
+# FEEDBACK 0-5 (SOLO FUERA DE FLUJO)
+# =========================
+if user["estado"] is None and texto.isdigit():
 
-        if not texto.isdigit():
-            await update.message.reply_text("Número 0-10")
-            return
+    valor = int(texto)
 
-        user["fatiga"] = int(texto)
+    if 0 <= valor <= 5:
 
-        tipo = decidir_tipo(user)
-
-        if "run" in user["deporte"]:
-            plantilla = plantilla_running(tipo)
-        elif "bici" in user["deporte"]:
-            plantilla = plantilla_bici(tipo)
+        if valor >= 4:
+            user["perfil"]["tendencia"] = "muy_duro"
+        elif valor <= 1:
+            user["perfil"]["tendencia"] = "muy_facil"
         else:
-            plantilla = plantilla_natacion(tipo)
-
-        prompt = generar_prompt(user, plantilla)
-        respuesta = llamar_gpt(prompt)
-
-        await update.message.reply_text(respuesta)
+            user["perfil"]["tendencia"] = "neutral"
 
         await update.message.reply_text(
-            "📊 Valora la sesión (0-5)\n\n0 = muy fácil\n5 = muy duro"
+            "📊 Feedback guardado\n👉 Ajusto próximos entrenamientos"
         )
-
-        reset_user(user)
         return
 
 
