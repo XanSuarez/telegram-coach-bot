@@ -19,18 +19,17 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 DEPORTE, TIEMPO, FATIGA = range(3)
 
 # =========================
-# RESPUESTA GPT LIBRE (SALUDO / GENERAL)
+# GPT RESPUESTA GENERAL
 # =========================
 def responder_chat(texto):
 
     prompt = f"""
-Responde como un entrenador cercano y profesional.
+Eres un entrenador cercano y profesional.
 
 Usuario dice:
 "{texto}"
 
-Si es saludo → responde breve y dirige a entrenar
-Si es duda → responde útil
+Si es saludo → responde breve y activa entrenamiento
 """
 
     try:
@@ -113,7 +112,7 @@ def generar_sesion(user):
 def generar_prompt(user, base):
 
     return f"""
-Eres entrenador.
+Eres entrenador experto.
 
 Sesión:
 {base}
@@ -148,6 +147,7 @@ def llamar_gpt(prompt):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
+    context.user_data["en_flujo"] = True
 
     teclado = [["Running", "Bici", "Natación"]]
 
@@ -159,13 +159,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DEPORTE
 
 # =========================
-# AUTO START (CLAVE)
+# AUTO START
 # =========================
 async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    # 🔒 Evita romper flujo
+    if context.user_data.get("en_flujo"):
+        return
+
     texto = update.message.text
 
-    # 👉 RESPONDE SIEMPRE
     respuesta = responder_chat(texto)
     await update.message.reply_text(respuesta)
 
@@ -176,6 +179,8 @@ async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True)
     )
 
+    context.user_data["en_flujo"] = True
+
     return DEPORTE
 
 # =========================
@@ -185,7 +190,9 @@ async def deporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["deporte"] = update.message.text.lower()
 
-    await update.message.reply_text("⏱️ ¿Cuánto tiempo tienes?")
+    await update.message.reply_text(
+        "⏱️ ¿Cuánto tiempo tienes?\n👉 Así ajusto el volumen"
+    )
     return TIEMPO
 
 async def tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -196,12 +203,15 @@ async def tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["tiempo"] = int(update.message.text)
 
-    await update.message.reply_text("😵 Fatiga (0-10)")
+    await update.message.reply_text(
+        "😵 ¿Nivel de fatiga? (0-10)\n👉 Ajusto la carga"
+    )
     return FATIGA
 
 async def fatiga(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message.text.isdigit():
+        await update.message.reply_text("Pon número 0-10")
         return FATIGA
 
     context.user_data["fatiga"] = int(update.message.text)
@@ -213,6 +223,9 @@ async def fatiga(update: Update, context: ContextTypes.DEFAULT_TYPE):
     respuesta = llamar_gpt(prompt)
 
     await update.message.reply_text(respuesta)
+
+    # 🔓 libera flujo
+    context.user_data["en_flujo"] = False
 
     return ConversationHandler.END
 
@@ -239,6 +252,5 @@ if __name__ == "__main__":
 
     app.add_handler(conv)
 
-    print("🚀 Bot conversacional activo")
+    print("🚀 XS Coach PRO activo")
     app.run_polling()
-
