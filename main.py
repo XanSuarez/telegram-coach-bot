@@ -1,3 +1,4 @@
+
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -6,8 +7,8 @@ from openai import AsyncOpenAI
 # ============================
 # CONFIGURACIÓN
 # ============================
-
-TELEGRAM_TOKEN = os.getenv("TOKEN")
+import os
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
