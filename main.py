@@ -7,10 +7,10 @@ from openai import AsyncOpenAI
 # CONFIGURACIÓN
 # ============================
 
-TELEGRAM_TOKEN = "TU_TOKEN_AQUI"
-OPENAI_API_KEY = "TU_API_KEY_AQUI"
+TELEGRAM_TOKEN = os.getenv("TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 logging.basicConfig(level=logging.INFO)
 
