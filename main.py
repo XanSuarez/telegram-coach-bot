@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-DEPORTE, TIEMPO, FATIGA = range(3)
+DEPORTE, METRICA, TIEMPO, FATIGA = range(4)
 
 # =========================
 # LÓGICA ENTRENAMIENTO
@@ -88,6 +88,29 @@ def generar_sesion(user):
 # =========================
 def generar_prompt(user, base):
 
+    extra = ""
+
+    if user["deporte"] == "bici":
+
+        if user.get("metrica") == "potencia":
+            extra = """
+ZONAS POR POTENCIA (%FTP):
+Z1 <55%
+Z2 56-75%
+Z3 76-90%
+Z4 91-105%
+Z5 >106%
+"""
+        else:
+            extra = """
+ZONAS POR FC:
+Z1 <75%
+Z2 76-80%
+Z3 81-85%
+Z4 86-91%
+Z5 >92%
+"""
+
     return f"""
 Eres entrenador experto.
 
@@ -97,6 +120,8 @@ Sesión:
 Condiciones:
 - Tiempo: {user["tiempo"]}
 - Fatiga: {user["fatiga"]}
+
+{extra}
 
 Hazla clara, estructurada y con emojis.
 
@@ -136,11 +161,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DEPORTE
 
 # =========================
-# AUTO START (FIX)
+# AUTO START
 # =========================
 async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    # 🚨 Si ya está en flujo → no hacer nada
     if context.user_data.get("en_flujo"):
         return
 
@@ -161,7 +185,34 @@ async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def deporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    context.user_data["deporte"] = update.message.text.lower()
+    texto = update.message.text.lower()
+    context.user_data["deporte"] = texto
+
+    # 👉 SI ES BICI → preguntar métrica
+    if "bici" in texto:
+        teclado = [["Potencia", "Frecuencia cardiaca"]]
+
+        await update.message.reply_text(
+            "⚙️ ¿Cómo te guías en la bici?\n👉 Esto define las zonas",
+            reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True)
+        )
+        return METRICA
+
+    # resto deportes → directo
+    await update.message.reply_text(
+        "⏱️ ¿Cuánto tiempo tienes?\n👉 Ajusto volumen"
+    )
+    return TIEMPO
+
+
+async def metrica(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    texto = update.message.text.lower()
+
+    if "potencia" in texto:
+        context.user_data["metrica"] = "potencia"
+    else:
+        context.user_data["metrica"] = "fc"
 
     await update.message.reply_text(
         "⏱️ ¿Cuánto tiempo tienes?\n👉 Ajusto volumen"
@@ -217,6 +268,7 @@ if __name__ == "__main__":
         ],
         states={
             DEPORTE: [MessageHandler(filters.TEXT, deporte)],
+            METRICA: [MessageHandler(filters.TEXT, metrica)],
             TIEMPO: [MessageHandler(filters.TEXT, tiempo)],
             FATIGA: [MessageHandler(filters.TEXT, fatiga)],
         },
@@ -226,5 +278,5 @@ if __name__ == "__main__":
 
     app.add_handler(conv)
 
-    print("🚀 XS Coach limpio y estable")
+    print("🚀 XS Coach PRO + métrica bici activo")
     app.run_polling()
