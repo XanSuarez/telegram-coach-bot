@@ -73,7 +73,7 @@ def seleccionar_base(deporte, tipo):
     if "run" in deporte:
         deporte = "running"
     elif "bici" in deporte:
-        deporte = "bici"
+        deporte = "ciclismo"
     else:
         deporte = "natación"
 
@@ -132,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     user["estado"] = "deporte"
 
-    teclado = [["Running", "Bici", "Natación"]]
+    teclado = [["Running", "Ciclismo", "Natación"]]
 
     await update.message.reply_text(
         "👋 Soy tu entrenador XS Endurance Bot\n\n"
@@ -189,6 +189,7 @@ Style:
 Include:
 - workout completed
 - endurance training
+- XS Coach
 """
 
         result = client.images.generate(
@@ -214,7 +215,7 @@ Include:
         user["estado"] = "tiempo"
 
         await update.message.reply_text(
-            "⏱️ ¿Cuánto tiempo tienes?\n👉 Así justo el volumen e intensidad"
+            "⏱️ ¿Cuánto tiempo tienes para entrenar?\n👉 Así ajusto el volumen e intensidad"
         )
         return
 
@@ -228,7 +229,7 @@ Include:
         user["estado"] = "fatiga"
 
         await update.message.reply_text(
-            "😵 Fatiga (0-10)\n👉 Así ajusto mejor la carga"
+            "😵 Cómo estás hoy de Fatiga (0-10)\n👉 Así ajusto mejor la carga"
         )
         return
 
