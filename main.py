@@ -30,10 +30,8 @@ def get_user(user_id):
         }
     return users[user_id]
 
-
 def reset_user(user):
     user["estado"] = None
-
 
 # =========================
 # DECISIÓN SESIÓN
@@ -53,7 +51,6 @@ def decidir_tipo(user):
         return "tempo"
     return "intensidad"
 
-
 # =========================
 # PLANTILLAS
 # =========================
@@ -65,7 +62,6 @@ def plantilla_running(tipo):
         "intensidad": "intervalos Z4-Z5"
     }[tipo]
 
-
 def plantilla_bici(tipo):
     return {
         "recuperacion": "Z1 cadencia alta",
@@ -73,7 +69,6 @@ def plantilla_bici(tipo):
         "tempo": "bloques Z3",
         "intensidad": "intervalos Z4"
     }[tipo]
-
 
 def plantilla_natacion(tipo):
     return {
@@ -83,7 +78,6 @@ def plantilla_natacion(tipo):
         "intensidad": "series cortas Z4"
     }[tipo]
 
-
 # =========================
 # GPT
 # =========================
@@ -91,7 +85,6 @@ def generar_prompt(user, plantilla):
 
     reglas_extra = ""
 
-    # 🚴 BICI PERSONALIZADA
     if "bici" in user["deporte"]:
 
         if user["perfil"].get("metrica_bici") == "potencia":
@@ -160,15 +153,16 @@ FORMATO:
 💡 Nota entrenador
 """
 
-
 def llamar_gpt(prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.6
-    )
-    return response.choices[0].message.content
-
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.6
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ Error GPT: {e}"
 
 # =========================
 # START
@@ -185,7 +179,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
     )
 
-
 # =========================
 # MANEJADOR
 # =========================
@@ -195,9 +188,10 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.lower()
 
     # =========================
-    # FEEDBACK 0-5
+    # FEEDBACK SOLO FUERA DE FLUJO
     # =========================
-    if texto.isdigit():
+    if user["estado"] is None and texto.isdigit():
+
         valor = int(texto)
 
         if 0 <= valor <= 5:
@@ -221,15 +215,13 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user["deporte"] = texto
 
-        # 🔥 SI ES BICI → preguntar métrica
         if "bici" in texto:
-
             user["estado"] = "metrica_bici"
 
             teclado = [["Potencia", "Frecuencia cardíaca"]]
 
             await update.message.reply_text(
-                "⚙️ ¿Cómo te guías en bici?\n\n👉 Esto define cómo te marco las zonas",
+                "⚙️ ¿Cómo te guías en bici?\n👉 Esto define las zonas",
                 reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
             )
             return
@@ -237,7 +229,7 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["estado"] = "tiempo"
 
         await update.message.reply_text(
-            "⏱️ ¿Cuánto tiempo tienes?\n👉 Así ajusto el volumen"
+            "⏱️ ¿Cuánto tiempo tienes?\n👉 Ajusto volumen"
         )
         return
 
@@ -271,34 +263,41 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user["estado"] = "fatiga"
 
         await update.message.reply_text(
-            "😵 Como te sientes de Fatiga hoy? (0-10)\n👉 Así ajusto mejor la carga"
+            "😵 Fatiga (0-10)\n👉 Ajusto carga"
         )
         return
 
     # =========================
-    # FATIGA → GENERAR
+    # FATIGA → GENERAR SESIÓN
     # =========================
-    # =========================
-# FEEDBACK 0-5 (SOLO FUERA DE FLUJO)
-# =========================
-if user["estado"] is None and texto.isdigit():
+    if user["estado"] == "fatiga":
 
-    valor = int(texto)
+        if not texto.isdigit():
+            await update.message.reply_text("Número 0-10")
+            return
 
-    if 0 <= valor <= 5:
+        user["fatiga"] = int(texto)
 
-        if valor >= 4:
-            user["perfil"]["tendencia"] = "muy_duro"
-        elif valor <= 1:
-            user["perfil"]["tendencia"] = "muy_facil"
+        tipo = decidir_tipo(user)
+
+        if "run" in user["deporte"]:
+            plantilla = plantilla_running(tipo)
+        elif "bici" in user["deporte"]:
+            plantilla = plantilla_bici(tipo)
         else:
-            user["perfil"]["tendencia"] = "neutral"
+            plantilla = plantilla_natacion(tipo)
+
+        prompt = generar_prompt(user, plantilla)
+        respuesta = llamar_gpt(prompt)
+
+        await update.message.reply_text(respuesta)
 
         await update.message.reply_text(
-            "📊 Feedback guardado\n👉 Ajusto próximos entrenamientos"
+            "📊 Valora la sesión (0-5)\n\n0 = muy fácil\n5 = muy duro"
         )
-        return
 
+        reset_user(user)
+        return
 
 # =========================
 # RUN
