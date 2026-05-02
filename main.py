@@ -5,39 +5,12 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from openai import OpenAI
 
-# =========================
-# CONFIG
-# =========================
 TELEGRAM_TOKEN = os.getenv("TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 users = {}
-
-# =========================
-# SESIONES BASE
-# =========================
-SESIONES = {
-    "running": {
-        "recuperacion": ["40' Z1 + 4x20'' técnica + 5'"],
-        "aerobico": ["50' Z2 continuo + 5x20'' técnica"],
-        "tempo": ["15' + 3x8' Z3 (rec 2') + 10'"],
-        "intensidad": ["15' + 6x3' Z4 (rec 2') + 10'"]
-    },
-    "bici": {
-        "recuperacion": ["45' Z1 cadencia alta"],
-        "aerobico": ["60' Z2 + 5x1' cadencia"],
-        "tempo": ["20' + 3x10' Z3 (rec 3') + 10'"],
-        "intensidad": ["15' + 5x4' Z4 (rec 3') + 10'"]
-    },
-    "natación": {
-        "recuperacion": ["200 + 6x50 técnica + 200"],
-        "aerobico": ["300 + 8x100 Z2 + 200"],
-        "tempo": ["300 + 5x200 Z3 + 100"],
-        "intensidad": ["300 + 10x100 Z4 + 100"]
-    }
-}
 
 # =========================
 # USER
@@ -49,7 +22,10 @@ def get_user(user_id):
             "deporte": None,
             "tiempo": None,
             "fatiga": None,
-            "perfil": {},
+            "perfil": {
+                "tendencia": "neutral",  # carga percibida
+            },
+            "historial": [],
             "ultimo_entreno": ""
         }
     return users[user_id]
@@ -58,9 +34,45 @@ def reset_user(user):
     user["estado"] = None
 
 # =========================
-# LÓGICA
+# PLANTILLAS CERRADAS
 # =========================
-def decidir_tipo_sesion(fatiga):
+def plantilla_running(tipo):
+    if tipo == "recuperacion":
+        return "Z1 continuo + técnica ligera"
+    if tipo == "aerobico":
+        return "Z2 continuo + técnica"
+    if tipo == "tempo":
+        return "bloques Z3"
+    return "intervalos Z4-Z5"
+
+def plantilla_bici(tipo):
+    if tipo == "recuperacion":
+        return "Z1 cadencia alta"
+    if tipo == "aerobico":
+        return "Z2 continuo + cadencia"
+    if tipo == "tempo":
+        return "bloques Z3"
+    return "intervalos Z4"
+
+def plantilla_natacion(tipo):
+    if tipo == "recuperacion":
+        return "técnica + suave"
+    if tipo == "aerobico":
+        return "series largas Z2"
+    if tipo == "tempo":
+        return "series medias Z3"
+    return "series cortas Z4"
+
+# =========================
+# DECISIÓN SESIÓN
+# =========================
+def decidir_tipo(user):
+    fatiga = user["fatiga"]
+    tendencia = user["perfil"]["tendencia"]
+
+    if tendencia == "fatiga_alta":
+        return "recuperacion"
+
     if fatiga >= 8:
         return "recuperacion"
     if fatiga >= 6:
@@ -69,36 +81,29 @@ def decidir_tipo_sesion(fatiga):
         return "tempo"
     return "intensidad"
 
-def seleccionar_base(deporte, tipo):
-    if "run" in deporte:
-        deporte = "running"
-    elif "bici" in deporte:
-        deporte = "ciclismo"
-    else:
-        deporte = "natación"
-
-    return random.choice(SESIONES[deporte][tipo])
-
 # =========================
-# GPT ENTRENAMIENTO
+# GPT (RELLENA PLANTILLA)
 # =========================
-def generar_prompt(user, base):
+def generar_prompt(user, plantilla):
 
     return f"""
 Eres entrenador profesional.
 
-Sesión base:
-{base}
+IMPORTANTE:
+- NO inventar estructura
+- SOLO desarrollar esta plantilla:
+{plantilla}
 
 Condiciones:
 - Deporte: {user["deporte"]}
-- Fatiga: {user["fatiga"]}/10
 - Tiempo: {user["tiempo"]} min
+- Fatiga: {user["fatiga"]}
 
 Reglas:
-- Usar zonas Z1-Z5
-- No ritmo exacto
-- Estructura clara y visual
+- Running/Bici → minutos
+- Natación → metros
+- Zonas Z1-Z5
+- NO mezclar deportes
 
 Formato:
 
@@ -120,7 +125,7 @@ def llamar_gpt(prompt):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
+        temperature=0.6
     )
     return response.choices[0].message.content
 
@@ -128,15 +133,14 @@ def llamar_gpt(prompt):
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = get_user(update.effective_user.id)
+
     user["estado"] = "deporte"
 
-    teclado = [["Running", "Ciclismo", "Natación"]]
+    teclado = [["Running", "Bici", "Natación"]]
 
     await update.message.reply_text(
-        "👋 Soy tu entrenador XS Endurance Bot\n\n"
-        "Voy a ajustar tu sesión como un entrenador real\n\n"
+        "👋 XS Coach activo\n\n"
         "🏃‍♂️ ¿Qué vas a entrenar hoy?",
         reply_markup=ReplyKeyboardMarkup(teclado, one_time_keyboard=True)
     )
@@ -150,86 +154,44 @@ async def manejar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.lower()
 
     # =========================
-    # COMPARTIR
+    # FEEDBACK USUARIO
     # =========================
-    if "compartir" in texto:
+    if texto in ["muy duro", "duro", "fácil", "perfecto"]:
 
-        prompt = f"""
-Texto Instagram corto para compartir entrenamiento.
-
-Debe:
-- ser motivador
-- 2-3 emojis
-- generar curiosidad
-- mencionar entrenador digital
-
-Máx 7 líneas
-"""
-
-        caption = llamar_gpt(prompt)
+        if texto in ["muy duro", "duro"]:
+            user["perfil"]["tendencia"] = "fatiga_alta"
+        elif texto == "fácil":
+            user["perfil"]["tendencia"] = "corto"
+        else:
+            user["perfil"]["tendencia"] = "neutral"
 
         await update.message.reply_text(
-            f"🔥 Copy listo:\n\n{caption}\n\n👉 Escribe 'imagen' para tu story"
+            "📊 Feedback guardado\n👉 Ajustaré los próximos entrenamientos"
         )
-        return
-
-    # =========================
-    # IMAGEN
-    # =========================
-    if "imagen" in texto:
-
-        prompt = f"""
-Fitness training card.
-
-Style:
-- white background
-- premium
-- XS Coach branding
-
-Include:
-- workout completed
-- endurance training
-- XS Coach
-"""
-
-        result = client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size="1024x1024"
-        )
-
-        image_base64 = result.data[0].b64_json
-
-        with open("entreno.png", "wb") as f:
-            f.write(base64.b64decode(image_base64))
-
-        await update.message.reply_photo(photo=open("entreno.png", "rb"))
         return
 
     # =========================
     # FLUJO
     # =========================
     if user["estado"] == "deporte":
-
         user["deporte"] = texto
         user["estado"] = "tiempo"
 
         await update.message.reply_text(
-            "⏱️ ¿Cuánto tiempo tienes para entrenar?\n👉 Así ajusto el volumen e intensidad"
+            "⏱️ ¿Cuánto tiempo tienes para entrenar hoy?\n👉 Así ajusto el volumen"
         )
         return
 
     if user["estado"] == "tiempo":
-
         if not texto.isdigit():
-            await update.message.reply_text("Pon cuantos minutos tienes para entrenar (ej: 60)")
+            await update.message.reply_text("Pon minutos (ej: 60)")
             return
 
         user["tiempo"] = int(texto)
         user["estado"] = "fatiga"
 
         await update.message.reply_text(
-            "😵 Cómo estás hoy de Fatiga (0-10)\n👉 Así ajusto mejor la carga"
+            "😵 Cuánta fatiga sientes hoy (0-10)\n👉 Así ajusto la carga"
         )
         return
 
@@ -241,10 +203,16 @@ Include:
 
         user["fatiga"] = int(texto)
 
-        tipo = decidir_tipo_sesion(user["fatiga"])
-        base = seleccionar_base(user["deporte"], tipo)
+        tipo = decidir_tipo(user)
 
-        prompt = generar_prompt(user, base)
+        if "run" in user["deporte"]:
+            plantilla = plantilla_running(tipo)
+        elif "bici" in user["deporte"]:
+            plantilla = plantilla_bici(tipo)
+        else:
+            plantilla = plantilla_natacion(tipo)
+
+        prompt = generar_prompt(user, plantilla)
         respuesta = llamar_gpt(prompt)
 
         user["ultimo_entreno"] = respuesta
@@ -252,7 +220,7 @@ Include:
         await update.message.reply_text(respuesta)
 
         await update.message.reply_text(
-            "📲 ¿Quieres compartirlo en redes?\nEscribe: compartir"
+            "📊 ¿Cómo ha ido la sesión?\nResponde: fácil / perfecto / duro"
         )
 
         reset_user(user)
@@ -261,7 +229,7 @@ Include:
 # =========================
 # RUN
 # =========================
-print("🚀 Bot XS Coach iniciado")
+print("🚀 XS Coach PRO activo")
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
