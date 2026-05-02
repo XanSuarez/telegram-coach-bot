@@ -19,129 +19,21 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 DEPORTE, METRICA, TIEMPO, FATIGA = range(4)
 
 # =========================
-# LÓGICA ENTRENAMIENTO
+# AUTO START (FUERA DEL CONV)
 # =========================
-def decidir_tipo(user):
+async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    fatiga = user["fatiga"]
+    if context.user_data.get("en_flujo"):
+        return
 
-    if fatiga >= 8:
-        return "recuperacion"
-    elif fatiga >= 6:
-        return "aerobico"
-    elif fatiga >= 4:
-        return "tempo"
-    else:
-        return "intensidad"
+    context.user_data["en_flujo"] = True
 
+    teclado = [["Running", "Bici", "Natación"]]
 
-def generar_sesion(user):
-
-    deporte = user["deporte"]
-    tipo = decidir_tipo(user)
-    tiempo = user["tiempo"]
-
-    if deporte == "running":
-
-        if tipo == "aerobico":
-            return f"{tiempo}’ Z2 + 5x20'' técnica"
-
-        if tipo == "tempo":
-            return f"15' + 3x8' Z3 + 10'"
-
-        if tipo == "intensidad":
-            return f"15' + {random.choice(['6x3’ Z4', '8x2’ Z5'])} + 10'"
-
-        if tipo == "recuperacion":
-            return f"{tiempo}’ Z1"
-
-    if deporte == "bici":
-
-        if tipo == "aerobico":
-            return f"{tiempo}’ Z2 + 5x1’ cadencia"
-
-        if tipo == "tempo":
-            return f"3x10’ Z3"
-
-        if tipo == "intensidad":
-            return f"5x4’ Z4"
-
-        if tipo == "recuperacion":
-            return f"{tiempo}’ Z1"
-
-    if deporte == "natacion":
-
-        if tipo == "aerobico":
-            return "300 + 8x100 Z2 + 200"
-
-        if tipo == "tempo":
-            return "5x200 Z3"
-
-        if tipo == "intensidad":
-            return "10x100 Z4"
-
-        if tipo == "recuperacion":
-            return "200 + técnica + 200"
-
-# =========================
-# GPT FORMATO
-# =========================
-def generar_prompt(user, base):
-
-    extra = ""
-
-    if user["deporte"] == "bici":
-
-        if user.get("metrica") == "potencia":
-            extra = """
-ZONAS POR POTENCIA (%FTP):
-Z1 <55%
-Z2 56-75%
-Z3 76-90%
-Z4 91-105%
-Z5 >106%
-"""
-        else:
-            extra = """
-ZONAS POR FC:
-Z1 <75%
-Z2 76-80%
-Z3 81-85%
-Z4 86-91%
-Z5 >92%
-"""
-
-    return f"""
-Eres entrenador experto.
-
-Sesión:
-{base}
-
-Condiciones:
-- Tiempo: {user["tiempo"]}
-- Fatiga: {user["fatiga"]}
-
-{extra}
-
-Hazla clara, estructurada y con emojis.
-
-FORMATO:
-
-📊 Contexto
-🏁 Objetivo
-🔥 Entrenamiento
-🔁 Alternativa
-💡 Nota entrenador
-"""
-
-def llamar_gpt(prompt):
-
-    r = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
+    await update.message.reply_text(
+        "👋 XS Coach\n\n🏃‍♂️ ¿Qué vas a entrenar hoy?",
+        reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True)
     )
-    return r.choices[0].message.content
 
 # =========================
 # START
@@ -161,24 +53,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DEPORTE
 
 # =========================
-# AUTO START
+# LÓGICA ENTRENAMIENTO
 # =========================
-async def auto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def decidir_tipo(user):
+    f = user["fatiga"]
+    if f >= 8: return "recuperacion"
+    if f >= 6: return "aerobico"
+    if f >= 4: return "tempo"
+    return "intensidad"
 
-    if context.user_data.get("en_flujo"):
-        return
+def generar_sesion(user):
 
-    context.user_data.clear()
-    context.user_data["en_flujo"] = True
+    t = user["tiempo"]
 
-    teclado = [["Running", "Bici", "Natación"]]
+    if user["deporte"] == "running":
+        return f"{t}' Z2 + técnica"    
 
-    await update.message.reply_text(
-        "👋 Soy tu XS Coach\n\n🏃‍♂️ ¿Qué vas a entrenar hoy?",
-        reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True)
+    if user["deporte"] == "bici":
+        return f"{t}' Z2 + cadencia"
+
+    return "300 + 8x100 + 200"
+
+# =========================
+# GPT
+# =========================
+def generar_prompt(user, base):
+
+    return f"""
+Eres entrenador.
+
+Sesión:
+{base}
+
+Tiempo {user["tiempo"]}
+Fatiga {user["fatiga"]}
+
+Hazla estructurada con emojis.
+"""
+
+def llamar_gpt(prompt):
+
+    r = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
     )
-
-    return DEPORTE
+    return r.choices[0].message.content
 
 # =========================
 # FLUJO
@@ -188,56 +107,43 @@ async def deporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.lower()
     context.user_data["deporte"] = texto
 
-    # 👉 SI ES BICI → preguntar métrica
     if "bici" in texto:
+
         teclado = [["Potencia", "Frecuencia cardiaca"]]
 
         await update.message.reply_text(
-            "⚙️ ¿Cómo te guías en la bici?\n👉 Esto define las zonas",
+            "⚙️ ¿Cómo te guías?",
             reply_markup=ReplyKeyboardMarkup(teclado, resize_keyboard=True)
         )
         return METRICA
 
-    # resto deportes → directo
-    await update.message.reply_text(
-        "⏱️ ¿Cuánto tiempo tienes?\n👉 Ajusto volumen"
-    )
+    await update.message.reply_text("⏱️ ¿Cuánto tiempo tienes?")
     return TIEMPO
-
 
 async def metrica(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    texto = update.message.text.lower()
-
-    if "potencia" in texto:
+    if "potencia" in update.message.text.lower():
         context.user_data["metrica"] = "potencia"
     else:
         context.user_data["metrica"] = "fc"
 
-    await update.message.reply_text(
-        "⏱️ ¿Cuánto tiempo tienes?\n👉 Ajusto volumen"
-    )
+    await update.message.reply_text("⏱️ ¿Cuánto tiempo tienes?")
     return TIEMPO
-
 
 async def tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message.text.isdigit():
-        await update.message.reply_text("Pon minutos (ej: 60)")
+        await update.message.reply_text("Pon minutos")
         return TIEMPO
 
     context.user_data["tiempo"] = int(update.message.text)
 
-    await update.message.reply_text(
-        "😵 Fatiga (0-10)\n👉 Ajusto carga"
-    )
+    await update.message.reply_text("😵 Fatiga 0-10")
     return FATIGA
-
 
 async def fatiga(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message.text.isdigit():
-        await update.message.reply_text("Pon número 0-10")
         return FATIGA
 
     context.user_data["fatiga"] = int(update.message.text)
@@ -262,10 +168,7 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(os.getenv("TOKEN")).build()
 
     conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, auto_start)
-        ],
+        entry_points=[CommandHandler("start", start)],
         states={
             DEPORTE: [MessageHandler(filters.TEXT, deporte)],
             METRICA: [MessageHandler(filters.TEXT, metrica)],
@@ -276,7 +179,9 @@ if __name__ == "__main__":
         allow_reentry=True
     )
 
+    # 🔥 IMPORTANTE: orden de handlers
     app.add_handler(conv)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_start))
 
-    print("🚀 XS Coach PRO + métrica bici activo")
+    print("🚀 XS Coach funcionando correctamente")
     app.run_polling()
